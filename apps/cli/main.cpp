@@ -49,12 +49,18 @@ COMMANDS:
   fix <path>           Plan, preview unified diffs, and optionally apply safe auto-fixes
 
 SCAN OPTIONS:
-  --format <fmt>       Output format: console (default), json, sarif, html
-  --output, -o <file>  Write report output to the specified file path
-  --config <file>      Load scan configuration from a specific JSON file
-  --fail-on <sev>      Exit with code 1 if any finding is >= severity
-                       (INFO, LOW, MEDIUM, HIGH, CRITICAL, NONE; default: HIGH)
-  --disable-rule <id>  Disable a specific rule ID for this scan run
+  --format <fmt>          Output format: console (default), json, sarif, html
+  --output, -o <file>     Write report output to the specified file path
+  --config <file>         Load scan configuration from a specific JSON file
+  --fail-on <sev>         Exit with code 1 if any finding is >= severity
+                          (INFO, LOW, MEDIUM, HIGH, CRITICAL, NONE; default: HIGH)
+  --disable-rule <id>     Disable a specific rule ID for this scan run
+  --scan-history          Scan past Git commits for secrets and large files
+  --max-commits <N>       Maximum number of commits to inspect with --scan-history (default: 50)
+  --write-baseline <file> Write fingerprints of current findings to a baseline JSON file
+  --baseline <file>       Suppress findings matching fingerprints in the baseline JSON file
+  --staged                Incremental pre-commit scan: analyze only Git staged files
+  --since <ref>           Incremental scan: analyze only files changed since <ref> (e.g. HEAD~1, origin/main)
 
 FIX OPTIONS:
   --dry-run            Preview planned changes and unified diffs without modifying files (default)
@@ -72,6 +78,11 @@ EXIT CODES:
 EXAMPLES:
   repodoctor scan .
   repodoctor scan ./my-project
+  repodoctor scan . --scan-history --max-commits 50
+  repodoctor scan . --write-baseline .repodoctor-baseline.json
+  repodoctor scan . --baseline .repodoctor-baseline.json
+  repodoctor scan . --staged
+  repodoctor scan . --since HEAD~1
   repodoctor scan . --format json
   repodoctor scan . --format sarif
   repodoctor scan . --format html --output report.html
@@ -171,6 +182,13 @@ int handleScanCommand(const std::vector<std::string>& args) {
     std::string configPath;
     std::string failOnStr;
     std::vector<std::string> cliDisabledRules;
+    bool scanHistory = false;
+    std::size_t maxCommits = 50;
+    bool maxCommitsProvided = false;
+    std::string writeBaselinePath;
+    std::string baselinePath;
+    bool stagedOnly = false;
+    std::string sinceRef;
 
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
@@ -213,6 +231,47 @@ int handleScanCommand(const std::vector<std::string>& args) {
                 return kExitUsageError;
             }
             cliDisabledRules.push_back(args[++i]);
+        } else if (arg == "--scan-history") {
+            scanHistory = true;
+        } else if (arg == "--max-commits") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "Missing value for --max-commits\n";
+                return kExitUsageError;
+            }
+            try {
+                std::size_t consumed = 0;
+                const auto& value = args[++i];
+                const long long parsed = std::stoll(value, &consumed);
+                if (parsed <= 0 || parsed > 1000 || consumed != value.size()) {
+                    std::cerr << "--max-commits must be an integer between 1 and 1000\n";
+                    return kExitUsageError;
+                }
+                maxCommits = static_cast<std::size_t>(parsed);
+                maxCommitsProvided = true;
+            } catch (...) {
+                std::cerr << "Invalid integer for --max-commits: '" << args[i] << "'\n";
+                return kExitUsageError;
+            }
+        } else if (arg == "--write-baseline") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "Missing value for --write-baseline\n";
+                return kExitUsageError;
+            }
+            writeBaselinePath = args[++i];
+        } else if (arg == "--baseline") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "Missing value for --baseline\n";
+                return kExitUsageError;
+            }
+            baselinePath = args[++i];
+        } else if (arg == "--staged") {
+            stagedOnly = true;
+        } else if (arg == "--since") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "Missing value for --since\n";
+                return kExitUsageError;
+            }
+            sinceRef = args[++i];
         } else if (!arg.empty() && arg.front() == '-') {
             std::cerr << "Unknown option for 'scan': " << arg << "\n";
             return kExitUsageError;
@@ -240,13 +299,35 @@ int handleScanCommand(const std::vector<std::string>& args) {
         }
     }
 
-    if (!failOnStr.empty() || !cliDisabledRules.empty()) {
+    const bool hasCliConfigOverrides =
+        !failOnStr.empty() || !cliDisabledRules.empty() || scanHistory || maxCommitsProvided ||
+        !writeBaselinePath.empty() || !baselinePath.empty() || stagedOnly || !sinceRef.empty();
+
+    if (hasCliConfigOverrides) {
         if (!configOverride.has_value()) {
             configOverride = repodoctor::ScanConfiguration{};
         }
         for (const auto& rId : cliDisabledRules) {
             configOverride->disabledRules[rId] =
                 repodoctor::DisabledRuleConfig{rId, "Disabled via --disable-rule CLI flag"};
+        }
+        if (scanHistory) {
+            configOverride->scanHistory = true;
+        }
+        if (maxCommitsProvided) {
+            configOverride->maxHistoryCommits = maxCommits;
+        }
+        if (!writeBaselinePath.empty()) {
+            configOverride->writeBaselineFilePath = writeBaselinePath;
+        }
+        if (!baselinePath.empty()) {
+            configOverride->baselineFilePath = baselinePath;
+        }
+        if (stagedOnly) {
+            configOverride->stagedOnly = true;
+        }
+        if (!sinceRef.empty()) {
+            configOverride->sinceGitRef = sinceRef;
         }
     }
 

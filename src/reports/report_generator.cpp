@@ -125,7 +125,19 @@ std::string ReportGenerator::generateConsoleReport(const ScanResult& result) con
     out << " Duration   : " << result.statistics.durationMilliseconds << " ms | "
         << "Files Discovered: " << result.statistics.totalFilesDiscovered
         << " (Text: " << result.statistics.textFilesAnalyzed
-        << ", Binary: " << result.statistics.binaryFilesDetected << ")\n";
+        << ", Binary: " << result.statistics.binaryFilesDetected << ")";
+    if (result.statistics.commitsScanned > 0) {
+        out << " | Commits Scanned: " << result.statistics.commitsScanned;
+    }
+    out << "\n";
+    if (result.statistics.suppressedByBaseline > 0) {
+        out << " Baseline   : " << result.statistics.suppressedByBaseline
+            << " adet bulgu baseline ile yok sayıldı (suppressed by baseline)\n";
+    }
+    if (result.statistics.suppressedByComment > 0) {
+        out << " Suppressed : " << result.statistics.suppressedByComment
+            << " finding(s) suppressed by inline comment (repodoctor-ignore)\n";
+    }
     out << "----------------------------------------------------------------------------\n";
     out << " OVERALL REPOSITORY HEALTH SCORE : " << result.healthScore.overallScore
         << " / 100  [Grade: " << result.healthScore.gradeLabel << "]\n";
@@ -175,6 +187,13 @@ std::string ReportGenerator::generateConsoleReport(const ScanResult& result) con
                 if (ev.lineNumber > 0) {
                     out << ":" << ev.lineNumber;
                 }
+                if (!ev.commitHash.empty()) {
+                    out << " [commit " << ev.commitHash.substr(0, std::min<std::size_t>(8, ev.commitHash.size()));
+                    if (!ev.commitAuthor.empty()) {
+                        out << " by " << ev.commitAuthor;
+                    }
+                    out << "]";
+                }
                 out << " -> " << ev.snippet;
                 if (!ev.contextNote.empty()) {
                     out << " (" << ev.contextNote << ")";
@@ -216,6 +235,9 @@ std::string ReportGenerator::generateJsonReport(const ScanResult& result) const 
         {"skipped_by_exclusion", result.statistics.skippedByExclusion},
         {"skipped_by_size_limit", result.statistics.skippedBySizeLimit},
         {"symlinks_skipped", result.statistics.symlinksSkipped},
+        {"suppressed_by_comment", result.statistics.suppressedByComment},
+        {"suppressed_by_baseline", result.statistics.suppressedByBaseline},
+        {"commits_scanned", result.statistics.commitsScanned},
         {"total_bytes_read", result.statistics.totalBytesRead},
         {"duration_ms", result.statistics.durationMilliseconds},
         {"was_cancelled", result.statistics.wasCancelled},
@@ -278,14 +300,20 @@ std::string ReportGenerator::generateJsonReport(const ScanResult& result) const 
     for (const auto& f : result.findings) {
         nlohmann::json evJson = nlohmann::json::array();
         for (const auto& e : f.evidence) {
-            evJson.push_back({
+            nlohmann::json item = {
                 {"file", e.relativeFilePath},
                 {"line", e.lineNumber},
                 {"column", e.columnNumber},
                 {"snippet", e.snippet},
                 {"context", e.contextNote},
                 {"is_redacted", e.isRedacted}
-            });
+            };
+            if (!e.commitHash.empty()) {
+                item["commit_hash"] = e.commitHash;
+                item["commit_author"] = e.commitAuthor;
+                item["commit_message"] = e.commitMessage;
+            }
+            evJson.push_back(std::move(item));
         }
         findingsJson.push_back({
             {"rule_id", f.ruleId},

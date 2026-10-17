@@ -43,7 +43,7 @@ void inspectNpmManifest(
     const std::string& relPath,
     const std::set<std::string>& fileSet,
     DependencyInspectionReport& report) {
-    std::ifstream in(repoRoot / relPath);
+    std::ifstream in(repoRoot / utf8ToPath(relPath));
     if (!in.is_open()) {
         return;
     }
@@ -81,8 +81,10 @@ void inspectNpmManifest(
         "yarn.lock",
         "pnpm-lock.yaml"
     };
+    std::error_code ec;
     for (const auto& candidate : lockCandidates) {
-        if (fileSet.count(candidate) > 0) {
+        if (fileSet.count(candidate) > 0 ||
+            std::filesystem::exists(repoRoot / utf8ToPath(candidate), ec)) {
             manifest.hasLockfile = true;
             manifest.lockfileRelativePath = candidate;
             break;
@@ -141,7 +143,7 @@ void inspectVcpkgManifest(
     const std::string& relPath,
     const std::set<std::string>& fileSet,
     DependencyInspectionReport& report) {
-    std::ifstream in(repoRoot / relPath);
+    std::ifstream in(repoRoot / utf8ToPath(relPath));
     if (!in.is_open()) {
         return;
     }
@@ -170,7 +172,10 @@ void inspectVcpkgManifest(
     const bool hasBuiltinBaseline =
         doc.contains("builtin-baseline") && doc["builtin-baseline"].is_string() &&
         !doc["builtin-baseline"].get<std::string>().empty();
-    const bool hasConfigJson = fileSet.count("vcpkg-configuration.json") > 0;
+    std::error_code ec;
+    const bool hasConfigJson =
+        fileSet.count("vcpkg-configuration.json") > 0 ||
+        std::filesystem::exists(repoRoot / "vcpkg-configuration.json", ec);
     manifest.hasLockfile = hasBuiltinBaseline || hasConfigJson;
     if (hasConfigJson) {
         manifest.lockfileRelativePath = "vcpkg-configuration.json";
@@ -213,7 +218,7 @@ void inspectPythonRequirements(
     const std::string& relPath,
     const std::set<std::string>& fileSet,
     DependencyInspectionReport& report) {
-    std::ifstream in(repoRoot / relPath);
+    std::ifstream in(repoRoot / utf8ToPath(relPath));
     if (!in.is_open()) {
         return;
     }
@@ -224,8 +229,10 @@ void inspectPythonRequirements(
 
     const std::vector<std::string> lockCandidates = {
         "poetry.lock", "uv.lock", "Pipfile.lock", "requirements.lock"};
+    std::error_code ec;
     for (const auto& lockFile : lockCandidates) {
-        if (fileSet.count(lockFile) > 0) {
+        if (fileSet.count(lockFile) > 0 ||
+            std::filesystem::exists(repoRoot / utf8ToPath(lockFile), ec)) {
             manifest.hasLockfile = true;
             manifest.lockfileRelativePath = lockFile;
             break;
@@ -296,7 +303,7 @@ void inspectPyprojectToml(
     const std::string& relPath,
     const std::set<std::string>& fileSet,
     DependencyInspectionReport& report) {
-    std::ifstream in(repoRoot / relPath);
+    std::ifstream in(repoRoot / utf8ToPath(relPath));
     if (!in.is_open()) {
         return;
     }
@@ -307,8 +314,10 @@ void inspectPyprojectToml(
 
     const std::vector<std::string> lockCandidates = {
         "poetry.lock", "uv.lock", "Pipfile.lock", "pdm.lock"};
+    std::error_code ec;
     for (const auto& lockFile : lockCandidates) {
-        if (fileSet.count(lockFile) > 0) {
+        if (fileSet.count(lockFile) > 0 ||
+            std::filesystem::exists(repoRoot / utf8ToPath(lockFile), ec)) {
             manifest.hasLockfile = true;
             manifest.lockfileRelativePath = lockFile;
             break;

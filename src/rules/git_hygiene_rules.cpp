@@ -36,6 +36,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-GIT-GITIGNORE-TEMPLATE"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         const auto& gitMeta = context.gitMetadata();
@@ -211,6 +212,30 @@ public:
                     "Exceeds configured threshold of " +
                         std::to_string(threshold / (1024ULL * 1024ULL)) + " MB",
                     false});
+            }
+        }
+
+        if (context.config().scanHistory) {
+            for (const auto& hist : context.historicalAdditions()) {
+                if (hist.addedSizeBytes >= threshold) {
+                    const double sizeMb =
+                        static_cast<double>(hist.addedSizeBytes) / (1024.0 * 1024.0);
+                    std::ostringstream oss;
+                    oss.precision(2);
+                    oss << std::fixed << sizeMb << " MB";
+                    const std::string shortHash = hist.commitHash.substr(0, 8);
+                    largeFiles.push_back(Evidence{
+                        hist.relativeFilePath,
+                        0,
+                        0,
+                        hist.relativeFilePath + " (" + oss.str() + ")",
+                        "Historical large file in commit " + shortHash + " by " +
+                            hist.commitAuthor + ": \"" + hist.commitMessage + "\"",
+                        false,
+                        hist.commitHash,
+                        hist.commitAuthor,
+                        hist.commitMessage});
+                }
             }
         }
 
@@ -402,6 +427,9 @@ public:
                 if (!line.empty() && line.back() == '\r') {
                     line.pop_back();
                 }
+                if (context.checkAndRecordInlineSuppression(line, id())) {
+                    continue;
+                }
                 if (line.rfind("<<<<<<< ", 0) == 0) {
                     openMarkerLine = lineNum;
                     openMarkerSnippet = line;
@@ -462,6 +490,7 @@ public:
     std::string falsePositiveConsiderations() const override {
         return "Exported source tarballs or zip archives intentionally omit the .git directory.";
     }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         const auto& meta = context.gitMetadata();

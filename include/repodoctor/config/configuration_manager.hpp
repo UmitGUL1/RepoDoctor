@@ -25,6 +25,12 @@ struct ScanConfiguration {
     Severity failOnSeverity{Severity::High};
     bool enableAdvisoryLookup{false};
     bool respectGitignore{false};
+    bool scanHistory{false};
+    std::size_t maxHistoryCommits{50};
+    bool stagedOnly{false};
+    std::string sinceGitRef;
+    std::string baselineFilePath;
+    std::string writeBaselineFilePath;
     std::vector<std::string> excludePatterns{
         ".git/**",
         ".repodoctor-backup/**",

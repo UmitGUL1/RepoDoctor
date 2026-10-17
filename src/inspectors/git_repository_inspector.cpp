@@ -1,13 +1,18 @@
 #include "repodoctor/inspectors/git_repository_inspector.hpp"
 #include "repodoctor/core/types.hpp"
+#include "git_process.hpp"
+#include <chrono>
+#include <stdexcept>
 
 #ifdef REPODOCTOR_USE_LIBGIT2
 #include <git2.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -343,4 +348,96 @@ bool GitRepositoryInspector::isPathMatchedByGitignore(
     return false;
 }
 
-}  // namespace repodoctor
+namespace {
+std::set<std::string> splitGitPaths(const std::string& data) {
+    std::set<std::string> paths;
+    std::size_t start = 0;
+    while (start < data.size()) {
+        const auto end = data.find('\0', start);
+        if (end == std::string::npos) throw std::runtime_error("Malformed Git path output.");
+        const auto value = data.substr(start, end - start);
+        const auto path = utf8ToPath(value);
+        if (value.empty() || path.is_absolute()) throw std::runtime_error("Unsafe Git path.");
+        for (const auto& part : path) if (part == ".." || part == ".git") throw std::runtime_error("Unsafe Git path.");
+        paths.insert(value); start = end + 1;
+    }
+    return paths;
+}
+std::string gitText(const std::string& value) {
+    auto end = value.size(); while (end && (value[end-1] == '\n' || value[end-1] == '\r')) --end;
+    return value.substr(0, end);
+}
+}
+
+std::vector<GitHistoricalCommitFileAddition> GitRepositoryInspector::inspectCommitHistory(
+    const std::filesystem::path& repoRoot, std::size_t maxCommits,
+    std::size_t* commitsScannedOut, const std::atomic<bool>* cancel,
+    std::size_t maxFileBytes) const {
+    if (commitsScannedOut) *commitsScannedOut = 0;
+    if (maxCommits == 0 || maxCommits > 1000) throw std::runtime_error("History commit limit must be between 1 and 1000.");
+    // Remote sources are shallow clones. Never claim their complete history was checked.
+    if (gitText(detail::readGit(repoRoot, {"rev-parse", "--is-shallow-repository"}, 128, cancel)) == "true")
+        throw std::runtime_error("History scanning requires a full local clone; shallow history is incomplete.");
+    const auto log = detail::readGit(repoRoot, {"rev-list", "--max-count=" + std::to_string(maxCommits), "HEAD", "--"}, 128 * 1024, cancel);
+    std::istringstream stream(log); std::string hash;
+    std::vector<GitHistoricalCommitFileAddition> additions;
+    std::size_t bytes = 0;
+    const auto started = std::chrono::steady_clock::now();
+    while (std::getline(stream, hash)) {
+        hash = gitText(hash);
+        if (hash.empty()) continue;
+        if (commitsScannedOut) ++*commitsScannedOut;
+        const auto paths = splitGitPaths(detail::readGit(repoRoot,
+            {"diff-tree", "--root", "-m", "--no-commit-id", "--name-only", "-z", "-r", "--diff-filter=ACMT", hash, "--"}, 8 * 1024 * 1024, cancel));
+        for (const auto& file : paths) {
+            if (std::chrono::steady_clock::now() - started > std::chrono::seconds(60))
+                throw std::runtime_error("History inspection time limit exceeded.");
+            if (additions.size() >= 50000) throw std::runtime_error("History file limit exceeded.");
+            const std::string object = hash + ":" + file;
+            const auto type = gitText(detail::readGit(repoRoot, {"cat-file", "-t", object}, 128, cancel));
+            if (type != "blob") continue; // submodule commits are not file content
+            const auto sizeText = gitText(detail::readGit(repoRoot, {"cat-file", "-s", object}, 128, cancel));
+            const auto size = std::stoull(sizeText);
+            GitHistoricalCommitFileAddition addition{};
+            addition.commitHash = hash;
+            // Commit metadata is attacker controlled and may itself contain credentials.
+            addition.commitAuthor = "[WITHHELD]"; addition.commitMessage = "[WITHHELD]";
+            addition.relativeFilePath = file; addition.addedSizeBytes = size;
+            if (size <= maxFileBytes) {
+                if (size > 32 * 1024 * 1024 - bytes) throw std::runtime_error("History byte limit exceeded.");
+                addition.addedContent = detail::readGit(repoRoot, {"cat-file", "blob", object}, maxFileBytes, cancel);
+                bytes += addition.addedContent.size();
+            }
+            additions.push_back(std::move(addition));
+        }
+    }
+    return additions;
+}
+
+std::set<std::string> GitRepositoryInspector::getStagedFiles(
+    const std::filesystem::path& repoRoot, const std::atomic<bool>* cancel) const {
+    return splitGitPaths(detail::readGit(repoRoot,
+        {"diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--diff-filter=ACMT", "--"}, 8 * 1024 * 1024, cancel));
+}
+
+std::set<std::string> GitRepositoryInspector::getChangedFilesSince(
+    const std::filesystem::path& repoRoot, const std::string& gitRef,
+    const std::atomic<bool>* cancel) const {
+    if (gitRef.empty() || gitRef.front() == '-' || gitRef.find('\0') != std::string::npos)
+        throw std::runtime_error("Invalid Git revision.");
+    const auto tree = gitText(detail::readGit(repoRoot,
+        {"rev-parse", "--verify", "--end-of-options", gitRef + "^{tree}"}, 128, cancel));
+    return splitGitPaths(detail::readGit(repoRoot,
+        {"diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--diff-filter=ACMT", tree, "--"}, 8 * 1024 * 1024, cancel));
+}
+
+std::string GitRepositoryInspector::readStagedFile(const std::filesystem::path& root,
+    const std::string& file, std::size_t maxBytes, const std::atomic<bool>* cancel) const {
+    return detail::readGit(root, {"cat-file", "blob", ":" + file}, maxBytes, cancel);
+}
+std::uint64_t GitRepositoryInspector::stagedFileSize(const std::filesystem::path& root,
+    const std::string& file, const std::atomic<bool>* cancel) const {
+    return std::stoull(gitText(detail::readGit(root, {"cat-file", "-s", ":" + file}, 128, cancel)));
+}
+
+} // namespace repodoctor

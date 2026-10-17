@@ -20,6 +20,7 @@ public:
     [[nodiscard]] virtual std::string falsePositiveConsiderations() const = 0;
     [[nodiscard]] virtual bool hasSafeFix() const noexcept { return false; }
     [[nodiscard]] virtual std::string safeFixId() const { return ""; }
+    [[nodiscard]] virtual bool isRepositoryWideRule() const noexcept { return false; }
 
     [[nodiscard]] virtual RuleEvaluationResult evaluate(const ScanContext& context) const = 0;
 

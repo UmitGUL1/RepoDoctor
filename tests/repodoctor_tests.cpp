@@ -24,6 +24,8 @@
 #include <string>
 #include <thread>
 #include "fake_git_environment.hpp"
+#include "../src/inspectors/git_process.hpp"
+#include "repodoctor/core/sha256.hpp"
 
 namespace repodoctor::testing {
 
@@ -516,6 +518,218 @@ TEST(ReportFormatsTest, GeneratesValidJsonSarifAndHtmlReports) {
     EXPECT_NE(html.find("RepoDoctor Health Report"), std::string::npos);
 }
 
+TEST(InlineSuppressionTest, SuppressesSecretsAndFileRulesWithInlineAndPreviousLineComments) {
+    ScopedTempRepo repo;
+    repo.populateHealthyBaseline();
+
+    const std::string awsKey = makeSyntheticAwsKey();
+    const std::string stripeKey = std::string("sk_live_") + "9876543210zyxwvutsrqponmlk";
+
+    repo.writeFile(
+        "src/suppressed_secrets.cpp",
+        "// Unit test mock credentials\n"
+        "const char* kAws = \"" + awsKey + "\"; // repodoctor-ignore: RD-SEC-001 (unit test mock)\n"
+        "// repodoctor-ignore: RD-SEC-001\n"
+        "const char* kStripe = \"" + stripeKey + "\";\n");
+
+    repo.writeFile(
+        "scripts/deploy.py",
+        "API_SECRET = \"" + awsKey + "\"  # repodoctor-ignore: RD-SEC-001\n");
+
+    repo.writeFile(
+        "src/conflict_ignored.cpp",
+        "// repodoctor-ignore: RD-GIT-006\n"
+        "<<<<<<< HEAD\n"
+        "int x = 1;\n");
+
+    LocalRepositorySource source(repo.path());
+    ScanEngine engine;
+    const ScanResult res = engine.scan(source);
+    ASSERT_TRUE(res.scanCompleted);
+
+    EXPECT_TRUE(res.findings.empty());
+    EXPECT_EQ(res.statistics.suppressedByComment, 4U);
+    EXPECT_EQ(res.healthScore.overallScore, 100);
+}
+
+TEST(BaselineSystemTest, WritesBaselineFingerprintsAndSuppressesExistingFindingsWhileReportingNewOnes) {
+    ScopedTempRepo repo;
+    repo.populateHealthyBaseline();
+
+    const std::string awsKey = makeSyntheticAwsKey();
+    repo.writeFile(
+        "src/legacy_auth.cpp",
+        "const char* kLegacyAwsKey = \"" + awsKey + "\";\n");
+
+    const auto baselinePath = repo.path() / ".repodoctor-baseline.json";
+
+    LocalRepositorySource source(repo.path());
+    ScanEngine engine;
+
+    // Step 1: Scan and write baseline
+    ScanConfiguration writeCfg{};
+    writeCfg.writeBaselineFilePath = pathToUtf8(baselinePath);
+    const ScanResult initialRes = engine.scan(source, writeCfg);
+    ASSERT_TRUE(initialRes.scanCompleted);
+    ASSERT_FALSE(initialRes.findings.empty());
+    ASSERT_TRUE(std::filesystem::exists(baselinePath));
+
+    // Step 2: Re-scan with baseline applied -> all existing findings suppressed
+    ScanConfiguration applyCfg{};
+    applyCfg.baselineFilePath = pathToUtf8(baselinePath);
+    const ScanResult suppressedRes = engine.scan(source, applyCfg);
+    ASSERT_TRUE(suppressedRes.scanCompleted);
+    EXPECT_TRUE(suppressedRes.findings.empty());
+    EXPECT_EQ(suppressedRes.statistics.suppressedByBaseline, 1U);
+    EXPECT_EQ(suppressedRes.healthScore.overallScore, 100);
+
+    ReportGenerator reportGen;
+    const std::string consoleOut = reportGen.generateConsoleReport(suppressedRes);
+    EXPECT_NE(consoleOut.find("1 adet bulgu baseline ile yok sayıldı"), std::string::npos);
+
+    // Step 3: Introduce a brand-new finding -> only the new finding is reported
+    repo.writeFile(
+        "src/new_conflict.cpp",
+        "<<<<<<< HEAD\nint v = 1;\n=======\nint v = 2;\n>>>>>>> branch\n");
+
+    const ScanResult deltaRes = engine.scan(source, applyCfg);
+    ASSERT_TRUE(deltaRes.scanCompleted);
+    EXPECT_EQ(deltaRes.statistics.suppressedByBaseline, 1U);
+    ASSERT_EQ(deltaRes.findings.size(), 1U);
+    EXPECT_EQ(deltaRes.findings[0].ruleId, "RD-GIT-006");
+}
+
+TEST(GitHistoryScanTest, DetectsSecretsCommittedInPastAndLaterDeletedWithCommitMetadata) {
+    ScopedTempRepo repo;
+    repo.populateHealthyBaseline();
+    std::error_code ec;
+    std::filesystem::remove_all(repo.path() / ".git", ec);
+
+    const std::string repoDir = pathToUtf8(repo.path());
+    const auto runGit = [&](const std::string& args) {
+        const std::string cmd = "git -C \"" + repoDir + "\" " + args
+#ifdef _WIN32
+            + " >NUL 2>&1";
+#else
+            + " >/dev/null 2>&1";
+#endif
+        return std::system(cmd.c_str());
+    };
+
+    ASSERT_EQ(runGit("init"), 0);
+    ASSERT_EQ(runGit("config user.name \"History Tester\""), 0);
+    ASSERT_EQ(runGit("config user.email \"tester@example.com\""), 0);
+
+    const std::string leakedKey = makeSyntheticAwsKey();
+    repo.writeFile(
+        "src/cloud_client.cpp",
+        "const char* kHistoricalSecret = \"" + leakedKey + "\";\n");
+    ASSERT_EQ(runGit("add ."), 0);
+    ASSERT_EQ(runGit("commit --no-gpg-sign -m \"Add cloud client with temporary key\""), 0);
+
+    // Remove the secret in a subsequent commit
+    repo.writeFile(
+        "src/cloud_client.cpp",
+        "// Secret removed from working tree\nint cloudConnect() { return 0; }\n");
+    ASSERT_EQ(runGit("add src/cloud_client.cpp"), 0);
+    ASSERT_EQ(runGit("commit --no-gpg-sign -m \"Remove hardcoded key from working tree\""), 0);
+
+    LocalRepositorySource source(repo.path());
+    ScanEngine engine;
+
+    // Default working-tree scan should NOT see the deleted secret
+    const ScanResult defaultRes = engine.scan(source);
+    ASSERT_TRUE(defaultRes.scanCompleted);
+    for (const auto& f : defaultRes.findings) {
+        EXPECT_NE(f.ruleId, "RD-SEC-001");
+    }
+
+    // History scan (--scan-history) MUST detect the secret in past commit history
+    ScanConfiguration histCfg{};
+    histCfg.scanHistory = true;
+    histCfg.maxHistoryCommits = 10;
+    const ScanResult histRes = engine.scan(source, histCfg);
+    ASSERT_TRUE(histRes.scanCompleted);
+    EXPECT_GE(histRes.statistics.commitsScanned, 2U);
+
+    bool foundHistoricalSecret = false;
+    for (const auto& f : histRes.findings) {
+        if (f.ruleId == "RD-SEC-001") {
+            for (const auto& ev : f.evidence) {
+                if (ev.relativeFilePath == "src/cloud_client.cpp" && !ev.commitHash.empty()) {
+                    foundHistoricalSecret = true;
+                    EXPECT_EQ(ev.commitAuthor, "[WITHHELD]");
+                    EXPECT_EQ(ev.commitMessage, "[WITHHELD]");
+                    EXPECT_EQ(ev.snippet.find(leakedKey), std::string::npos);
+                }
+            }
+        }
+    }
+    EXPECT_TRUE(foundHistoricalSecret);
+}
+
+TEST(IncrementalScanTest, StagedAndSinceRefScansAnalyzeOnlyChangedFilesAndSkipRepoWideRules) {
+    ScopedTempRepo repo;
+    const std::string repoDir = pathToUtf8(repo.path());
+    const auto runGit = [&](const std::string& args) {
+        const std::string cmd = "git -C \"" + repoDir + "\" " + args
+#ifdef _WIN32
+            + " >NUL 2>&1";
+#else
+            + " >/dev/null 2>&1";
+#endif
+        return std::system(cmd.c_str());
+    };
+
+    ASSERT_EQ(runGit("init"), 0);
+    ASSERT_EQ(runGit("config user.name \"Incremental Tester\""), 0);
+    ASSERT_EQ(runGit("config user.email \"inc@example.com\""), 0);
+
+    // Deliberately omit README.md and LICENSE so repo-wide rules would normally fail
+    repo.writeFile("src/clean.cpp", "int main() { return 0; }\n");
+    ASSERT_EQ(runGit("add src/clean.cpp"), 0);
+    ASSERT_EQ(runGit("commit -m \"Initial commit\""), 0);
+
+    // Stage a file with a merge conflict marker
+    repo.writeFile(
+        "src/staged_bug.cpp",
+        "<<<<<<< HEAD\nint a = 1;\n=======\nint a = 2;\n>>>>>>> feature\n");
+    ASSERT_EQ(runGit("add src/staged_bug.cpp"), 0);
+
+    LocalRepositorySource source(repo.path());
+    ScanEngine engine;
+
+    ScanConfiguration stagedCfg{};
+    stagedCfg.stagedOnly = true;
+    const ScanResult stagedRes = engine.scan(source, stagedCfg);
+    ASSERT_TRUE(stagedRes.scanCompleted);
+
+    // Only the staged file should be discovered
+    EXPECT_EQ(stagedRes.statistics.totalFilesDiscovered, 1U);
+
+    // Repo-wide rules (like RD-DOC-001 Missing README) must be skipped as NOT_APPLICABLE
+    for (const auto& eval : stagedRes.ruleEvaluations) {
+        if (eval.ruleId == "RD-DOC-001" || eval.ruleId == "RD-DOC-007" ||
+            eval.ruleId == "RD-BLD-001") {
+            EXPECT_EQ(eval.status, CheckStatus::NOT_APPLICABLE);
+        }
+    }
+
+    // File-based rule RD-GIT-006 must trigger on the staged file
+    ASSERT_EQ(stagedRes.findings.size(), 1U);
+    EXPECT_EQ(stagedRes.findings[0].ruleId, "RD-GIT-006");
+
+    // Commit the file and test --since HEAD~1
+    ASSERT_EQ(runGit("commit -m \"Commit conflict file\""), 0);
+    ScanConfiguration sinceCfg{};
+    sinceCfg.sinceGitRef = "HEAD~1";
+    const ScanResult sinceRes = engine.scan(source, sinceCfg);
+    ASSERT_TRUE(sinceRes.scanCompleted);
+    EXPECT_EQ(sinceRes.statistics.totalFilesDiscovered, 1U);
+    ASSERT_EQ(sinceRes.findings.size(), 1U);
+    EXPECT_EQ(sinceRes.findings[0].ruleId, "RD-GIT-006");
+}
+
 }  // namespace repodoctor::testing
 
 namespace repodoctor::testing {
@@ -689,3 +903,4 @@ TEST(CloneProcessRegressionTest, EngineCancellationStopsAnActiveOfflineClone) {
     EXPECT_NE(scan.errorMessage.find("cancelled"), std::string::npos);
 }
 } // namespace repodoctor::testing
+#include "security_features_tests.inc"

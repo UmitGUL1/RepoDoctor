@@ -1,4 +1,5 @@
 #include "repodoctor/security/secret_detection_engine.hpp"
+#include "repodoctor/core/sha256.hpp"
 
 #include <algorithm>
 #include <array>
@@ -127,9 +128,72 @@ bool SecretDetectionEngine::isLikelyPlaceholderOrExample(
     return false;
 }
 
+bool SecretDetectionEngine::hasInlineSuppression(
+    std::string_view line,
+    std::string_view ruleId) {
+    if (line.empty()) {
+        return false;
+    }
+    const std::string lowerLine = toLower(line);
+    const std::string marker = "repodoctor-ignore:";
+    const auto pos = lowerLine.find(marker);
+    if (pos == std::string::npos) {
+        return false;
+    }
+
+    // Verify it appears inside or as a comment (//, #, /*, <!--, --, ;)
+    const std::string_view prefix = line.substr(0, pos);
+    if (prefix.find("//") == std::string_view::npos &&
+        prefix.find('#') == std::string_view::npos &&
+        prefix.find("/*") == std::string_view::npos &&
+        prefix.find("<!--") == std::string_view::npos &&
+        prefix.find("--") == std::string_view::npos &&
+        prefix.find(';') == std::string_view::npos) {
+        return false;
+    }
+
+    std::string rest = lowerLine.substr(pos + marker.size());
+    const auto parenPos = rest.find('(');
+    if (parenPos != std::string::npos) {
+        rest = rest.substr(0, parenPos);
+    }
+    const auto endCommentPos = rest.find("-->");
+    if (endCommentPos != std::string::npos) {
+        rest = rest.substr(0, endCommentPos);
+    }
+    const auto endBlockPos = rest.find("*/");
+    if (endBlockPos != std::string::npos) {
+        rest = rest.substr(0, endBlockPos);
+    }
+
+    const std::string targetRule = toLower(ruleId);
+    std::size_t idx = 0;
+    while (idx < rest.size()) {
+        while (idx < rest.size() &&
+               (std::isspace(static_cast<unsigned char>(rest[idx])) != 0 || rest[idx] == ',')) {
+            ++idx;
+        }
+        std::size_t tokenEnd = idx;
+        while (tokenEnd < rest.size() &&
+               std::isspace(static_cast<unsigned char>(rest[tokenEnd])) == 0 &&
+               rest[tokenEnd] != ',') {
+            ++tokenEnd;
+        }
+        if (tokenEnd > idx) {
+            const std::string token = rest.substr(idx, tokenEnd - idx);
+            if (token == "all" || token == "*" || token == targetRule) {
+                return true;
+            }
+        }
+        idx = tokenEnd;
+    }
+    return false;
+}
+
 std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
     const std::string& relativeFilePath,
-    std::string_view content) const {
+    std::string_view content,
+    std::size_t* suppressedCountOut) const {
     std::vector<SecretMatch> matches;
 
     // Skip template example files (.env.example, config.sample.yaml, etc.)
@@ -160,6 +224,17 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
 
     std::size_t lineStart = 0;
     std::size_t lineNumber = 0;
+    std::string prevLineStr;
+
+    auto isSuppressedForRule = [&](const std::string& curLine, std::string_view ruleId) {
+        if (hasInlineSuppression(curLine, ruleId) || hasInlineSuppression(prevLineStr, ruleId)) {
+            if (suppressedCountOut != nullptr) {
+                ++(*suppressedCountOut);
+            }
+            return true;
+        }
+        return false;
+    };
 
     while (lineStart <= content.size()) {
         const std::size_t lineEnd = content.find('\n', lineStart);
@@ -179,22 +254,26 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
 
             // 1. Private key header
             if (std::regex_search(lineStr, m, kPrivateKeyRegex)) {
-                SecretMatch match{};
-                match.kind = SecretKind::PrivateKeyMaterial;
-                match.providerOrPatternName = "PEM/OpenSSH Private Key";
-                match.relativeFilePath = relativeFilePath;
-                match.lineNumber = lineNumber;
-                match.columnNumber = static_cast<std::size_t>(m.position(0)) + 1;
-                match.redactedTokenPreview = "[REDACTED:PRIVATE_KEY]";
-                match.redactedSnippet = "[REDACTED:PRIVATE_KEY_BLOCK_HEADER]";
-                match.severity = Severity::Critical;
-                match.confidenceScore = 0.99;
-                matches.push_back(std::move(match));
+                if (!isSuppressedForRule(lineStr, "RD-SEC-002")) {
+                    SecretMatch match{};
+                    match.kind = SecretKind::PrivateKeyMaterial;
+                    match.providerOrPatternName = "PEM/OpenSSH Private Key";
+                    match.relativeFilePath = relativeFilePath;
+                    match.lineNumber = lineNumber;
+                    match.columnNumber = static_cast<std::size_t>(m.position(0)) + 1;
+                    match.redactedTokenPreview = "[REDACTED:PRIVATE_KEY]";
+                    match.redactedSnippet = "[REDACTED:PRIVATE_KEY_BLOCK_HEADER]";
+                    match.severity = Severity::Critical;
+                    match.confidenceScore = 0.99;
+                    match.contentFingerprint = detail::sha256(lineStr);
+                    matches.push_back(std::move(match));
+                }
             }
             // 2. AWS Access Key ID
             if (std::regex_search(lineStr, m, kAwsAccessKeyRegex)) {
                 const std::string token = m[1].str();
-                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath)) {
+                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath) &&
+                    !isSuppressedForRule(lineStr, "RD-SEC-001")) {
                     SecretMatch match{};
                     match.kind = SecretKind::CloudOrApiToken;
                     match.providerOrPatternName = "AWS Access Key ID";
@@ -205,13 +284,15 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, token);
                     match.severity = Severity::Critical;
                     match.confidenceScore = 0.95;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
             // 3. GitHub Personal Access / OAuth Token
             if (std::regex_search(lineStr, m, kGitHubTokenRegex)) {
                 const std::string token = m[1].str();
-                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath)) {
+                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath) &&
+                    !isSuppressedForRule(lineStr, "RD-SEC-001")) {
                     SecretMatch match{};
                     match.kind = SecretKind::CloudOrApiToken;
                     match.providerOrPatternName = "GitHub Token";
@@ -222,13 +303,15 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, token);
                     match.severity = Severity::Critical;
                     match.confidenceScore = 0.98;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
             // 4. Slack Token
             if (std::regex_search(lineStr, m, kSlackTokenRegex)) {
                 const std::string token = m[1].str();
-                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath)) {
+                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath) &&
+                    !isSuppressedForRule(lineStr, "RD-SEC-001")) {
                     SecretMatch match{};
                     match.kind = SecretKind::CloudOrApiToken;
                     match.providerOrPatternName = "Slack API Token";
@@ -239,13 +322,15 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, token);
                     match.severity = Severity::Critical;
                     match.confidenceScore = 0.96;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
             // 5. Stripe Live Secret Key
             if (std::regex_search(lineStr, m, kStripeKeyRegex)) {
                 const std::string token = m[1].str();
-                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath)) {
+                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath) &&
+                    !isSuppressedForRule(lineStr, "RD-SEC-001")) {
                     SecretMatch match{};
                     match.kind = SecretKind::CloudOrApiToken;
                     match.providerOrPatternName = "Stripe Live Secret Key";
@@ -256,13 +341,15 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, token);
                     match.severity = Severity::Critical;
                     match.confidenceScore = 0.98;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
             // 6. Google API Key
             if (std::regex_search(lineStr, m, kGoogleApiKeyRegex)) {
                 const std::string token = m[1].str();
-                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath)) {
+                if (!isLikelyPlaceholderOrExample(token, lineStr, relativeFilePath) &&
+                    !isSuppressedForRule(lineStr, "RD-SEC-001")) {
                     SecretMatch match{};
                     match.kind = SecretKind::CloudOrApiToken;
                     match.providerOrPatternName = "Google API Key";
@@ -273,13 +360,15 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, token);
                     match.severity = Severity::High;
                     match.confidenceScore = 0.92;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
             // 7. Database/Service Connection String with embedded password
             if (std::regex_search(lineStr, m, kConnectionUriRegex)) {
                 const std::string secretPass = m[2].str();
-                if (!isLikelyPlaceholderOrExample(secretPass, lineStr, relativeFilePath)) {
+                if (!isLikelyPlaceholderOrExample(secretPass, lineStr, relativeFilePath) &&
+                    !isSuppressedForRule(lineStr, "RD-SEC-004")) {
                     SecretMatch match{};
                     match.kind = SecretKind::HardcodedCredential;
                     match.providerOrPatternName = "Database/Service Connection URI Password";
@@ -290,6 +379,7 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, secretPass);
                     match.severity = Severity::High;
                     match.confidenceScore = 0.90;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
@@ -297,8 +387,10 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
             if (std::regex_search(lineStr, m, kGenericSecretAssignRegex)) {
                 const std::string candidate = m[1].str();
                 const double entropy = computeShannonEntropy(candidate);
+                const std::string_view ruleIdForMatch =
+                    isDotEnvFile ? "RD-SEC-003" : "RD-SEC-004";
                 if (!isLikelyPlaceholderOrExample(candidate, lineStr, relativeFilePath) &&
-                    entropy >= 3.1) {
+                    entropy >= 3.1 && !isSuppressedForRule(lineStr, ruleIdForMatch)) {
                     SecretMatch match{};
                     match.kind =
                         isDotEnvFile ? SecretKind::EnvConfigSecret : SecretKind::HardcodedCredential;
@@ -311,9 +403,13 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
                     match.redactedSnippet = redactLineContainingSecret(lineStr, candidate);
                     match.severity = Severity::High;
                     match.confidenceScore = 0.85;
+                    match.contentFingerprint = detail::sha256(lineStr);
                     matches.push_back(std::move(match));
                 }
             }
+            prevLineStr = lineStr;
+        } else {
+            prevLineStr.clear();
         }
 
         if (lineEnd == std::string_view::npos) {

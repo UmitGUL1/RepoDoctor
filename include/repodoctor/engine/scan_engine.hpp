@@ -44,6 +44,21 @@ public:
 
     [[nodiscard]] const RuleRegistry& ruleRegistry() const noexcept { return registry_; }
 
+    [[nodiscard]] static std::string computeEvidenceFingerprint(
+        const std::string& ruleId,
+        const Evidence& ev);
+
+    [[nodiscard]] static bool writeBaselineFile(
+        const ScanResult& result,
+        const std::filesystem::path& baselinePath,
+        std::string* errorOut = nullptr);
+
+    [[nodiscard]] static bool applyBaselineFile(
+        ScanResult& result,
+        const std::filesystem::path& baselinePath,
+        const ScanConfiguration& config,
+        std::string* errorOut = nullptr);
+
 private:
     RuleRegistry registry_;
     RiskScorer scorer_;

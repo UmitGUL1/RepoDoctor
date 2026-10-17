@@ -91,12 +91,54 @@ void ScanContext::indexRepository() {
     const auto canonicalRoot = std::filesystem::weakly_canonical(repoRoot_, ec);
     const std::filesystem::path baseRoot = ec ? repoRoot_ : canonicalRoot;
 
+    std::set<std::string> incrementalFilter;
+    const bool useIncrementalFilter = isIncrementalScan();
+    if (useIncrementalFilter) {
+        if (config_.stagedOnly) {
+            const auto staged = gitInspector.getStagedFiles(baseRoot, cancelToken_);
+            incrementalFilter.insert(staged.begin(), staged.end());
+        }
+        if (!config_.sinceGitRef.empty()) {
+            const auto changed = gitInspector.getChangedFilesSince(baseRoot, config_.sinceGitRef, cancelToken_);
+            incrementalFilter.insert(changed.begin(), changed.end());
+        }
+    }
+
     std::filesystem::recursive_directory_iterator it(
         baseRoot, std::filesystem::directory_options::skip_permission_denied, ec);
     std::filesystem::recursive_directory_iterator end;
 
     SecretDetectionEngine secretEngine;
     std::vector<std::string> allRelativePaths;
+
+
+    if (config_.stagedOnly) {
+        for (const auto& relStr : incrementalFilter) {
+            if (isCancelled()) { stats_.wasCancelled = true; break; }
+            if (ConfigurationManager::matchesExclusion(config_, relStr)) { ++stats_.skippedByExclusion; continue; }
+            if (++stats_.totalFilesDiscovered > config_.maxRepositoryScanFiles) { stats_.fileLimitReached = true; break; }
+            IndexedFile file{};
+            file.relativePath = relStr; file.absolutePath = baseRoot / utf8ToPath(relStr); file.isTrackedInGit = true;
+            file.sizeBytes = gitInspector.stagedFileSize(baseRoot, relStr, cancelToken_);
+            if (file.sizeBytes > config_.maxFileSizeBytes) ++stats_.skippedBySizeLimit;
+            else {
+                if (file.sizeBytes > 32 * 1024 * 1024 - stats_.totalBytesRead)
+                    throw std::runtime_error("Staged content byte limit exceeded.");
+                auto content = gitInspector.readStagedFile(baseRoot, relStr, static_cast<std::size_t>(config_.maxFileSizeBytes), cancelToken_);
+                stats_.totalBytesRead += content.size();
+                file.isBinary = detectBinaryBuffer(content) || hasKnownBinaryExtension(utf8ToPath(relStr));
+                if (file.isBinary) ++stats_.binaryFilesDetected;
+                else {
+                    ++stats_.textFilesAnalyzed;
+                    auto matches = secretEngine.scanFileContent(relStr, content, &stats_.suppressedByComment);
+                    for (auto& match : matches) secretMatches_.push_back(std::move(match));
+                    stagedContents_[relStr] = std::move(content);
+                }
+            }
+            allRelativePaths.push_back(relStr); files_.push_back(std::move(file));
+        }
+        it = end; // Index entries may exist even when the working file was deleted.
+    }
 
     for (; it != end; it.increment(ec)) {
         if (ec) {
@@ -151,6 +193,10 @@ void ScanContext::indexRepository() {
 
         std::error_code regEc;
         if (!it->is_regular_file(regEc) || regEc) {
+            continue;
+        }
+
+        if (useIncrementalFilter && incrementalFilter.count(relStr) == 0) {
             continue;
         }
 
@@ -218,7 +264,8 @@ void ScanContext::indexRepository() {
                     content.resize(actualRead);
                     stats_.totalBytesRead += actualRead;
 
-                    auto fileSecrets = secretEngine.scanFileContent(relStr, content);
+                    auto fileSecrets = secretEngine.scanFileContent(
+                        relStr, content, &stats_.suppressedByComment);
                     for (auto& s : fileSecrets) {
                         secretMatches_.push_back(std::move(s));
                     }
@@ -231,6 +278,29 @@ void ScanContext::indexRepository() {
         files_.push_back(std::move(indexed));
     }
 
+    // Optional Git commit history inspection (--scan-history)
+    if (!isCancelled() && config_.scanHistory) {
+        historicalAdditions_ = gitInspector.inspectCommitHistory(
+            baseRoot, config_.maxHistoryCommits, &stats_.commitsScanned, cancelToken_,
+            static_cast<std::size_t>(config_.maxFileSizeBytes));
+        for (const auto& hist : historicalAdditions_) {
+            if (ConfigurationManager::matchesExclusion(config_, hist.relativeFilePath)) {
+                continue;
+            }
+            if (hist.addedSizeBytes > config_.maxFileSizeBytes) ++stats_.skippedBySizeLimit;
+            if (!hist.addedContent.empty() && !detectBinaryBuffer(hist.addedContent)) {
+                auto histSecrets = secretEngine.scanFileContent(
+                    hist.relativeFilePath, hist.addedContent, &stats_.suppressedByComment);
+                for (auto& s : histSecrets) {
+                    s.commitHash = hist.commitHash;
+                    s.commitAuthor = hist.commitAuthor;
+                    s.commitMessage = hist.commitMessage;
+                    secretMatches_.push_back(std::move(s));
+                }
+            }
+        }
+    }
+
     // Keep files sorted deterministically by relativePath
     std::sort(files_.begin(), files_.end(), [](const IndexedFile& a, const IndexedFile& b) {
         return a.relativePath < b.relativePath;
@@ -240,7 +310,7 @@ void ScanContext::indexRepository() {
         fileIndexByPath_[files_[i].relativePath] = i;
     }
 
-    if (!isCancelled()) {
+    if (!isCancelled() && !isIncrementalScan()) {
         if (progressCallback_) {
             progressCallback_("Inspecting dependency manifests", 2, 4);
         }
@@ -252,6 +322,16 @@ void ScanContext::indexRepository() {
     const auto endClock = std::chrono::steady_clock::now();
     stats_.durationMilliseconds =
         std::chrono::duration<double, std::milli>(endClock - startClock).count();
+}
+
+bool ScanContext::checkAndRecordInlineSuppression(
+    std::string_view line,
+    std::string_view ruleId) const {
+    if (SecretDetectionEngine::hasInlineSuppression(line, ruleId)) {
+        stats_.suppressedByComment++;
+        return true;
+    }
+    return false;
 }
 
 bool ScanContext::hasFile(const std::string& relativePath) const {
@@ -284,6 +364,10 @@ std::optional<std::string> ScanContext::readTextFile(
         (maxBytes > 0) ? maxBytes : static_cast<std::size_t>(config_.maxFileSizeBytes);
     if (info.sizeBytes > limit) {
         return std::nullopt;
+    }
+    if (config_.stagedOnly) {
+        const auto cached = stagedContents_.find(relativePath);
+        return cached == stagedContents_.end() ? std::nullopt : std::optional<std::string>(cached->second);
     }
     std::ifstream in(info.absolutePath, std::ios::binary);
     if (!in.is_open()) {

@@ -42,13 +42,23 @@ public:
         std::vector<Evidence> hits;
         for (const auto& match : context.secretMatches()) {
             if (match.kind == SecretKind::CloudOrApiToken) {
+                std::string note =
+                    match.providerOrPatternName + " (" + match.redactedTokenPreview + ")";
+                if (!match.commitHash.empty()) {
+                    note += " [Commit " + match.commitHash.substr(0, 8) + " by " +
+                            match.commitAuthor + ": \"" + match.commitMessage + "\"]";
+                }
                 hits.push_back(Evidence{
                     match.relativeFilePath,
                     match.lineNumber,
                     match.columnNumber,
                     match.redactedSnippet,
-                    match.providerOrPatternName + " (" + match.redactedTokenPreview + ")",
-                    true});
+                    std::move(note),
+                    true,
+                    match.commitHash,
+                    match.commitAuthor,
+                    match.commitMessage,
+                    match.contentFingerprint});
             }
         }
 
@@ -95,13 +105,22 @@ public:
         std::vector<Evidence> hits;
         for (const auto& match : context.secretMatches()) {
             if (match.kind == SecretKind::PrivateKeyMaterial) {
+                std::string note = match.providerOrPatternName;
+                if (!match.commitHash.empty()) {
+                    note += " [Commit " + match.commitHash.substr(0, 8) + " by " +
+                            match.commitAuthor + ": \"" + match.commitMessage + "\"]";
+                }
                 hits.push_back(Evidence{
                     match.relativeFilePath,
                     match.lineNumber,
                     match.columnNumber,
                     match.redactedSnippet,
-                    match.providerOrPatternName,
-                    true});
+                    std::move(note),
+                    true,
+                    match.commitHash,
+                    match.commitAuthor,
+                    match.commitMessage,
+                    match.contentFingerprint});
             }
         }
 
@@ -182,13 +201,22 @@ public:
 
         for (const auto& match : context.secretMatches()) {
             if (match.kind == SecretKind::EnvConfigSecret) {
+                std::string note = match.providerOrPatternName;
+                if (!match.commitHash.empty()) {
+                    note += " [Commit " + match.commitHash.substr(0, 8) + " by " +
+                            match.commitAuthor + ": \"" + match.commitMessage + "\"]";
+                }
                 envHits.push_back(Evidence{
                     match.relativeFilePath,
                     match.lineNumber,
                     match.columnNumber,
                     match.redactedSnippet,
-                    match.providerOrPatternName,
-                    true});
+                    std::move(note),
+                    true,
+                    match.commitHash,
+                    match.commitAuthor,
+                    match.commitMessage,
+                    match.contentFingerprint});
             }
         }
 
@@ -234,13 +262,23 @@ public:
         std::vector<Evidence> hits;
         for (const auto& match : context.secretMatches()) {
             if (match.kind == SecretKind::HardcodedCredential) {
+                std::string note =
+                    match.providerOrPatternName + " (" + match.redactedTokenPreview + ")";
+                if (!match.commitHash.empty()) {
+                    note += " [Commit " + match.commitHash.substr(0, 8) + " by " +
+                            match.commitAuthor + ": \"" + match.commitMessage + "\"]";
+                }
                 hits.push_back(Evidence{
                     match.relativeFilePath,
                     match.lineNumber,
                     match.columnNumber,
                     match.redactedSnippet,
-                    match.providerOrPatternName + " (" + match.redactedTokenPreview + ")",
-                    true});
+                    std::move(note),
+                    true,
+                    match.commitHash,
+                    match.commitAuthor,
+                    match.commitMessage,
+                    match.contentFingerprint});
             }
         }
 

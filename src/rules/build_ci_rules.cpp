@@ -65,6 +65,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-BLD-GITHUB-CI"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         const auto workflows = findCiWorkflowFiles(context);
@@ -111,6 +112,7 @@ public:
     std::string falsePositiveConsiderations() const override {
         return "Pure documentation or configuration-only repositories have no executable code to test and return NOT_APPLICABLE.";
     }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         bool hasSourceCode = false;

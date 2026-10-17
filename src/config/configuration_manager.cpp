@@ -154,6 +154,16 @@ ScanConfiguration ConfigurationManager::loadFromFile(
         config.respectGitignore = doc["respect_gitignore"].get<bool>();
     }
 
+    if (doc.contains("scan_history") && doc["scan_history"].is_boolean()) config.scanHistory = doc["scan_history"].get<bool>();
+    if (doc.contains("staged_only") && doc["staged_only"].is_boolean()) config.stagedOnly = doc["staged_only"].get<bool>();
+    if (doc.contains("since_git_ref") && doc["since_git_ref"].is_string()) config.sinceGitRef = doc["since_git_ref"].get<std::string>();
+    if (doc.contains("max_history_commits")) {
+        const auto& value = doc["max_history_commits"];
+        if (value.is_number_integer() && value > 0 && value <= 1000) config.maxHistoryCommits = value.get<std::size_t>();
+        else if (warningsOut) warningsOut->push_back("max_history_commits must be between 1 and 1000.");
+    }
+    // Baseline file paths remain explicit CLI/API inputs; repository config cannot write files.
+
     if (doc.contains("exclude") && doc["exclude"].is_array()) {
         for (const auto& item : doc["exclude"]) {
             if (item.is_string()) {
@@ -210,6 +220,10 @@ bool ConfigurationManager::saveToFile(
     doc["fail_on_severity"] = toString(config.failOnSeverity);
     doc["enable_advisory_lookup"] = config.enableAdvisoryLookup;
     doc["respect_gitignore"] = config.respectGitignore;
+    doc["scan_history"] = config.scanHistory;
+    doc["max_history_commits"] = config.maxHistoryCommits;
+    doc["staged_only"] = config.stagedOnly;
+    doc["since_git_ref"] = config.sinceGitRef;
     doc["exclude"] = config.excludePatterns;
 
     nlohmann::json disabledObj = nlohmann::json::object();

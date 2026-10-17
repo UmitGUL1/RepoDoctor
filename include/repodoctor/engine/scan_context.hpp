@@ -54,9 +54,19 @@ public:
     [[nodiscard]] const std::vector<SecretMatch>& secretMatches() const noexcept {
         return secretMatches_;
     }
+    [[nodiscard]] const std::vector<GitHistoricalCommitFileAddition>& historicalAdditions() const noexcept {
+        return historicalAdditions_;
+    }
     [[nodiscard]] const std::vector<IndexedFile>& files() const noexcept { return files_; }
     [[nodiscard]] const ScanStatistics& statistics() const noexcept { return stats_; }
     [[nodiscard]] bool isCancelled() const noexcept;
+    [[nodiscard]] bool isIncrementalScan() const noexcept {
+        return config_.stagedOnly || !config_.sinceGitRef.empty();
+    }
+
+    [[nodiscard]] bool checkAndRecordInlineSuppression(
+        std::string_view line,
+        std::string_view ruleId) const;
 
     [[nodiscard]] bool hasFile(const std::string& relativePath) const;
     [[nodiscard]] std::optional<IndexedFile> findFileCaseInsensitive(
@@ -77,9 +87,11 @@ private:
     GitRepoMetadata gitMetadata_;
     DependencyInspectionReport dependencyReport_;
     std::vector<SecretMatch> secretMatches_;
+    std::vector<GitHistoricalCommitFileAddition> historicalAdditions_;
     std::vector<IndexedFile> files_;
     std::map<std::string, std::size_t> fileIndexByPath_;
     mutable ScanStatistics stats_;
+    std::map<std::string, std::string> stagedContents_;
 };
 
 }  // namespace repodoctor

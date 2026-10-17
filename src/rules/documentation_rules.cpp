@@ -61,6 +61,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-DOC-README-TEMPLATE"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         const auto readme = findPrimaryReadme(context);
@@ -101,6 +102,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-DOC-README-SECTIONS"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         const auto readme = findPrimaryReadme(context);
@@ -161,6 +163,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-DOC-README-SECTIONS"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         if (context.findFileCaseInsensitive("INSTALL.md").has_value() ||
@@ -229,6 +232,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-DOC-README-SECTIONS"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         const auto readme = findPrimaryReadme(context);
@@ -290,6 +294,7 @@ public:
     }
     bool hasSafeFix() const noexcept override { return true; }
     std::string safeFixId() const override { return "FIX-DOC-CONTRIBUTING-TEMPLATE"; }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         if (context.findFileCaseInsensitive("CONTRIBUTING.md").has_value() ||
@@ -380,6 +385,9 @@ public:
                     continue;
                 }
                 if (inCodeBlock) {
+                    continue;
+                }
+                if (context.checkAndRecordInlineSuppression(line, id())) {
                     continue;
                 }
 
@@ -477,6 +485,7 @@ public:
     std::string falsePositiveConsiderations() const override {
         return "Private/internal proprietary repositories may store licensing terms outside the source tree. Filename presence alone does not constitute legal verification.";
     }
+    bool isRepositoryWideRule() const noexcept override { return true; }
 
     RuleEvaluationResult evaluate(const ScanContext& context) const override {
         static const std::array<std::string_view, 8> kLicenseNames = {

@@ -48,6 +48,10 @@ struct Evidence {
     std::string snippet;          // Always redacted if derived from secret detection
     std::string contextNote;
     bool isRedacted{false};
+    std::string commitHash{};
+    std::string commitAuthor{};
+    std::string commitMessage{};
+    std::string contentFingerprint{}; // Non-reversible identity, excluded from reports
 };
 
 struct Finding {
@@ -86,6 +90,9 @@ struct ScanStatistics {
     double durationMilliseconds{0.0};
     bool wasCancelled{false};
     bool fileLimitReached{false};
+    std::size_t suppressedByComment{0};
+    std::size_t suppressedByBaseline{0};
+    std::size_t commitsScanned{0};
 };
 
 [[nodiscard]] inline std::string pathToUtf8(const std::filesystem::path& p) {

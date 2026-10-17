@@ -27,6 +27,10 @@ struct SecretMatch {
     std::string redactedTokenPreview;
     Severity severity{Severity::Critical};
     double confidenceScore{0.9};
+    std::string commitHash;
+    std::string commitAuthor;
+    std::string contentFingerprint{}; // Non-reversible identity, excluded from reports
+    std::string commitMessage;
 };
 
 class SecretDetectionEngine {
@@ -35,7 +39,12 @@ public:
 
     [[nodiscard]] std::vector<SecretMatch> scanFileContent(
         const std::string& relativeFilePath,
-        std::string_view content) const;
+        std::string_view content,
+        std::size_t* suppressedCountOut = nullptr) const;
+
+    [[nodiscard]] static bool hasInlineSuppression(
+        std::string_view line,
+        std::string_view ruleId);
 
     [[nodiscard]] static std::string redactSecretValue(std::string_view rawSecret);
 
