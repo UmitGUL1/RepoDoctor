@@ -2,6 +2,15 @@
 
 RepoDoctor uses **GoogleTest** (`tests/repodoctor_tests.cpp`) and a synthetic benchmark suite (`benchmarks/repodoctor_benchmarks.cpp`) to verify correctness, security redaction, and performance.
 
+The current suite contains **19 core cases and 4 Qt controller cases**, exposed
+as two CTest executables. CI also launches the actual QML application, captures
+its six pages, and smoke-tests the deployed Windows package with Qt removed
+from PATH. A separate Linux job runs the core suite with ASan and UBSan.
+
+Clone process tests use a compiled local fake Git client, so timeout, size and
+cancellation checks do not depend on GitHub network availability. Symlink-only
+cases report a skip if the host does not permit creating symlinks.
+
 ---
 
 ## 1. Running the Automated Test Suite

@@ -1,5 +1,7 @@
 # RepoDoctor — Open-Source Repository Health Analyzer
 
+[![CI](https://github.com/UmitGUL1/RepoDoctor/actions/workflows/ci.yml/badge.svg)](https://github.com/UmitGUL1/RepoDoctor/actions/workflows/ci.yml)
+
 **Tagline**: *Scan. Diagnose. Improve.*
 
 **RepoDoctor** is a cross-platform C++20 developer tool (providing both the `repodoctor-cli` command-line executable and the `RepoDoctor` Qt 6 / QML desktop application) for inspecting local Git repositories and public GitHub repositories. It detects actionable engineering problems across documentation, Git hygiene, credential & secret exposure, CI/CD & build quality, testing integration, and dependency management—and generates console, JSON, OASIS SARIF v2.1.0, and HTML reports alongside previewable, non-destructive auto-fixes.
