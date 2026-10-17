@@ -20,7 +20,7 @@ TEST(StagedContentRegressionTest, PartialStagingAndMissingWorkingFileStillScanTh
     realGitInit(repo.path());
     const std::string file = "src/çağrı ü.txt";
     const auto key = makeSyntheticAwsKey();
-    repo.writeFile(file, "cloud=" + key + "\n<<<<<<< HEAD\n");
+    repo.writeFile(file, "cloud=" + key + "\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> branch\n");
     (void)detail::readGit(repo.path(), {"add", "--", file});
     repo.writeFile(file, "clean working tree\n");
     ScanConfiguration config; config.stagedOnly = true;
@@ -171,5 +171,47 @@ TEST(ConfigurationRegressionTest, NewScanOptionsRoundTripWithoutEnablingFileWrit
     EXPECT_TRUE(loaded.scanHistory); EXPECT_TRUE(loaded.stagedOnly);
     EXPECT_EQ(loaded.maxHistoryCommits, 73U); EXPECT_EQ(loaded.sinceGitRef, "HEAD~2");
     EXPECT_TRUE(loaded.writeBaselineFilePath.empty());
+}
+
+TEST(InlineSuppressionSecurityTest, QuotedMarkersCannotHideCredentials) {
+    const auto content = "cloud=" + makeSyntheticAwsKey() + "; note=\"// repodoctor-ignore: RD-SEC-001\"";
+    EXPECT_FALSE(SecretDetectionEngine::hasInlineSuppression(content, "RD-SEC-001"));
+    EXPECT_FALSE(SecretDetectionEngine{}.scanFileContent("config.txt", content).empty());
+    EXPECT_TRUE(SecretDetectionEngine::hasInlineSuppression("const char* x = \"text\"; // repodoctor-ignore: RD-SEC-001", "RD-SEC-001"));
+}
+
+TEST(ReportRedactionRegressionTest, NonSecurityEvidenceCannotLeakAnIgnoredCredential) {
+    ScopedTempRepo repo; repo.populateHealthyBaseline(); const auto key = makeSyntheticAwsKey();
+    repo.writeFile(".github/workflows/leak.yml", "name: leak\non: push\njobs:\n  test:\n    steps:\n"
+        "      - uses: some/action@main # cloud=" + key + " repodoctor-ignore: RD-SEC-001\n");
+    LocalRepositorySource source(repo.path()); const auto scan = ScanEngine{}.scan(source);
+    ASSERT_TRUE(scan.scanCompleted); ASSERT_FALSE(scan.findings.empty());
+    ReportGenerator gen;
+    for (const auto& report : {gen.generateConsoleReport(scan), gen.generateJsonReport(scan), gen.generateHtmlReport(scan), gen.generateSarifReport(scan)})
+        EXPECT_EQ(report.find(key), std::string::npos);
+}
+
+TEST(InlineSuppressionSecurityTest, PreviousLineSuppressesOneCompleteConflictBlock) {
+    ScopedTempRepo repo; repo.populateHealthyBaseline();
+    repo.writeFile("conflict.txt", "// repodoctor-ignore: RD-GIT-006\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> feature\n");
+    LocalRepositorySource source(repo.path()); const auto scan = ScanEngine{}.scan(source);
+    ASSERT_TRUE(scan.scanCompleted);
+    EXPECT_EQ(findEval(scan, "RD-GIT-006")->status, CheckStatus::PASS);
+    EXPECT_EQ(scan.statistics.suppressedByComment, 1U);
+}
+
+TEST(HistorySecurityTest, DeletedBinarySizeComesFromBlobMetadata) {
+    ScopedTempRepo repo; realGitInit(repo.path());
+    repo.writeFile("asset.bin", std::string(8192, '\0'));
+    (void)detail::readGit(repo.path(), {"add", "."});
+    (void)detail::readGit(repo.path(), {"commit", "--no-gpg-sign", "-m", "binary"});
+    (void)detail::readGit(repo.path(), {"rm", "asset.bin"});
+    (void)detail::readGit(repo.path(), {"commit", "--no-gpg-sign", "-m", "remove binary"});
+    ScanConfiguration config; config.scanHistory = true; config.maxFileSizeBytes = 1024; config.largeFileThresholdBytes = 4096;
+    LocalRepositorySource source(repo.path()); const auto scan = ScanEngine{}.scan(source, config);
+    ASSERT_TRUE(scan.scanCompleted) << scan.errorMessage;
+    const auto* eval = findEval(scan, "RD-GIT-003"); ASSERT_NE(eval, nullptr);
+    EXPECT_EQ(eval->status, CheckStatus::WARNING);
+    ASSERT_FALSE(eval->findings.empty()); EXPECT_FALSE(eval->findings[0].evidence[0].commitHash.empty());
 }
 } // namespace repodoctor::testing

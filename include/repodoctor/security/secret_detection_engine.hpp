@@ -40,7 +40,8 @@ public:
     [[nodiscard]] std::vector<SecretMatch> scanFileContent(
         const std::string& relativeFilePath,
         std::string_view content,
-        std::size_t* suppressedCountOut = nullptr) const;
+        std::size_t* suppressedCountOut = nullptr,
+        bool allowSuppressions = true) const;
 
     [[nodiscard]] static bool hasInlineSuppression(
         std::string_view line,

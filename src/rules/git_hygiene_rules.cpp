@@ -421,16 +421,18 @@ public:
             std::size_t openMarkerLine = 0;
             std::string openMarkerSnippet;
             bool seenSeparator = false;
+            std::string previousLine;
 
             while (std::getline(stream, line)) {
                 ++lineNum;
                 if (!line.empty() && line.back() == '\r') {
                     line.pop_back();
                 }
-                if (context.checkAndRecordInlineSuppression(line, id())) {
-                    continue;
-                }
+                const std::string previous = previousLine;
+                previousLine = line;
                 if (line.rfind("<<<<<<< ", 0) == 0) {
+                    if (context.checkAndRecordInlineSuppression(line, id()) ||
+                        context.checkAndRecordInlineSuppression(previous, id())) continue;
                     openMarkerLine = lineNum;
                     openMarkerSnippet = line;
                     seenSeparator = false;

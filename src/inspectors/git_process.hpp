@@ -31,6 +31,8 @@ inline std::string readGit(const std::filesystem::path& root,
     if (cancel && cancel->load()) throw std::runtime_error("Scan cancelled by user.");
     std::vector<std::string> args = {"git", "--no-pager", "-c", "core.hooksPath=",
         "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.quotePath=false",
+        "-c", "protocol.allow=never", "-c", "protocol.file.allow=never",
+        "-c", "credential.helper=", "-c", "credential.interactive=false", "-c", "core.askPass=",
         "-C", pathToUtf8(root)};
     args.insert(args.end(), arguments.begin(), arguments.end());
 #ifdef _WIN32

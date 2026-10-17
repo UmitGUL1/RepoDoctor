@@ -139,12 +139,14 @@ bool ScanEngine::applyBaselineFile(
     std::set<std::string> baselineSet;
     for (const auto& item : root["fingerprints"]) {
         if (!item.is_object() || !item.contains("fingerprint") || !item["fingerprint"].is_string()) {
-            if (errorOut) *errorOut = "Invalid baseline fingerprint entry."; return false;
+            if (errorOut) *errorOut = "Invalid baseline fingerprint entry.";
+            return false;
         }
         const auto fp = item["fingerprint"].get<std::string>();
         if (fp.size() != 67 || fp.rfind("v2:", 0) != 0 ||
             fp.find_first_not_of("0123456789abcdef", 3) != std::string::npos) {
-            if (errorOut) *errorOut = "Invalid baseline fingerprint."; return false;
+            if (errorOut) *errorOut = "Invalid baseline fingerprint.";
+            return false;
         }
         baselineSet.insert(fp);
     }
@@ -317,6 +319,20 @@ ScanResult ScanEngine::scan(
         }
 
         RuleEvaluationResult eval = rulePtr->evaluate(context);
+        // Other rules can quote the same sensitive source line (for example a CI action).
+        // Inline exceptions affect detection policy, never whether reports expose a secret.
+        SecretDetectionEngine evidenceScanner;
+        for (auto& finding : eval.findings) {
+            for (auto& evidence : finding.evidence) {
+                if (!evidenceScanner.scanFileContent("evidence.txt", evidence.snippet, nullptr, false).empty()) {
+                    evidence.contentFingerprint = detail::sha256(evidence.snippet);
+                    evidence.snippet = "[REDACTED:SENSITIVE_LINE]";
+                    evidence.isRedacted = true;
+                }
+                if (!evidenceScanner.scanFileContent("evidence.txt", evidence.contextNote, nullptr, false).empty())
+                    evidence.contextNote = "[REDACTED:SENSITIVE_CONTEXT]";
+            }
+        }
         for (const auto& f : eval.findings) {
             result.findings.push_back(f);
         }

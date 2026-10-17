@@ -141,16 +141,25 @@ bool SecretDetectionEngine::hasInlineSuppression(
         return false;
     }
 
-    // Verify it appears inside or as a comment (//, #, /*, <!--, --, ;)
+    // A marker inside a quoted string is data, not an opt-out instruction.
     const std::string_view prefix = line.substr(0, pos);
-    if (prefix.find("//") == std::string_view::npos &&
-        prefix.find('#') == std::string_view::npos &&
-        prefix.find("/*") == std::string_view::npos &&
-        prefix.find("<!--") == std::string_view::npos &&
-        prefix.find("--") == std::string_view::npos &&
-        prefix.find(';') == std::string_view::npos) {
-        return false;
+    char quote = 0;
+    bool escaped = false, comment = false, onlyWhitespace = true;
+    for (std::size_t i = 0; i < prefix.size(); ++i) {
+        const char c = prefix[i];
+        if (escaped) { escaped = false; continue; }
+        if (quote) {
+            if (c == '\\') escaped = true;
+            else if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' || c == '"' || c == '`') { quote = c; onlyWhitespace = false; continue; }
+        if (c == '#' || prefix.substr(i, 2) == "//" || prefix.substr(i, 2) == "/*" ||
+            prefix.substr(i, 4) == "<!--" || prefix.substr(i, 2) == "--" ||
+            (c == ';' && onlyWhitespace)) { comment = true; break; }
+        if (std::isspace(static_cast<unsigned char>(c)) == 0) onlyWhitespace = false;
     }
+    if (!comment) return false;
 
     std::string rest = lowerLine.substr(pos + marker.size());
     const auto parenPos = rest.find('(');
@@ -193,7 +202,8 @@ bool SecretDetectionEngine::hasInlineSuppression(
 std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
     const std::string& relativeFilePath,
     std::string_view content,
-    std::size_t* suppressedCountOut) const {
+    std::size_t* suppressedCountOut,
+    bool allowSuppressions) const {
     std::vector<SecretMatch> matches;
 
     // Skip template example files (.env.example, config.sample.yaml, etc.)
@@ -227,6 +237,7 @@ std::vector<SecretMatch> SecretDetectionEngine::scanFileContent(
     std::string prevLineStr;
 
     auto isSuppressedForRule = [&](const std::string& curLine, std::string_view ruleId) {
+        if (!allowSuppressions) return false;
         if (hasInlineSuppression(curLine, ruleId) || hasInlineSuppression(prevLineStr, ruleId)) {
             if (suppressedCountOut != nullptr) {
                 ++(*suppressedCountOut);

@@ -22,7 +22,7 @@ inline std::string sha256(std::string_view text) {
         0x748f82eeU,0x78a5636fU,0x84c87814U,0x8cc70208U,0x90befffaU,0xa4506cebU,0xbef9a3f7U,0xc67178f2U};
     std::array<std::uint32_t,8> h{0x6a09e667U,0xbb67ae85U,0x3c6ef372U,0xa54ff53aU,0x510e527fU,0x9b05688cU,0x1f83d9abU,0x5be0cd19U};
     std::vector<std::uint8_t> data(text.begin(),text.end());
-    const auto bits=static_cast<std::uint64_t>(data.size())*8;
+    const std::uint64_t bits=data.size()*8ULL;
     data.push_back(0x80);
     while(data.size()%64!=56) data.push_back(0);
     for(int i=7;i>=0;--i) data.push_back(static_cast<std::uint8_t>(bits>>(i*8)));

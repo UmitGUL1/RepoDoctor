@@ -5,6 +5,7 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
+#include <stdexcept>
 
 namespace repodoctor {
 
