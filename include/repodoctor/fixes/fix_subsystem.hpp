@@ -11,7 +11,7 @@
 namespace repodoctor {
 
 enum class FixOperationType : std::uint8_t {
-    CreateFile = 0,
+    CreateNewFile = 0,
     AppendOrModifyFile = 1
 };
 
@@ -21,7 +21,7 @@ struct PlannedFix {
     std::string title;
     std::string rationale;
     std::string targetRelativePath;
-    FixOperationType operation{FixOperationType::CreateFile};
+    FixOperationType operation{FixOperationType::CreateNewFile};
     std::string originalContent;
     std::string proposedContent;
     std::string unifiedDiff;

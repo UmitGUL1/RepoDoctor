@@ -109,7 +109,7 @@ public:
             "Prevents accidentally committing build directories, local .env secrets, and OS junk files.";
         fix.targetRelativePath = ".gitignore";
         fix.operation =
-            exists ? FixOperationType::AppendOrModifyFile : FixOperationType::CreateFile;
+            exists ? FixOperationType::AppendOrModifyFile : FixOperationType::CreateNewFile;
         fix.originalContent = original;
         fix.proposedContent = proposed;
         fix.unifiedDiff = FixPlanner::generateUnifiedDiff(
@@ -161,7 +161,7 @@ public:
         fix.rationale =
             "Provides a structured starting point with Installation, Usage, and Contributing sections.";
         fix.targetRelativePath = "README.md";
-        fix.operation = FixOperationType::CreateFile;
+        fix.operation = FixOperationType::CreateNewFile;
         fix.originalContent = original;
         fix.proposedContent = oss.str();
         if (exists && !original.empty()) {
@@ -280,7 +280,7 @@ public:
         fix.rationale =
             "Provides contributor onboarding instructions, workflow steps, and issue reporting guidelines.";
         fix.targetRelativePath = "CONTRIBUTING.md";
-        fix.operation = FixOperationType::CreateFile;
+        fix.operation = FixOperationType::CreateNewFile;
         fix.originalContent = original;
         fix.proposedContent = content;
         if (exists && !original.empty()) {
@@ -341,7 +341,7 @@ public:
         fix.rationale =
             "Establishes automated build and test verification with SHA-pinned checkout and read-only token permissions.";
         fix.targetRelativePath = relTarget;
-        fix.operation = FixOperationType::CreateFile;
+        fix.operation = FixOperationType::CreateNewFile;
         fix.originalContent = original;
         fix.proposedContent = workflowYaml;
         if (exists && !original.empty()) {
@@ -564,7 +564,7 @@ FixExecutionReport FixExecutor::execute(
         // Verify file did not change since planning
         std::error_code ec;
         const bool existsNow = std::filesystem::exists(resolvedTarget, ec);
-        if (fix.operation == FixOperationType::CreateFile && existsNow) {
+        if (fix.operation == FixOperationType::CreateNewFile && existsNow) {
             item.applied = false;
             item.message =
                 "Conflict: target file '" + fix.targetRelativePath +
@@ -680,7 +680,7 @@ FixExecutionReport FixExecutor::execute(
 #endif
         // Recheck the target after staging. Never turn a create into an overwrite.
         bool conflict = false;
-        if (fix.operation == FixOperationType::CreateFile) {
+        if (fix.operation == FixOperationType::CreateNewFile) {
             std::filesystem::create_hard_link(tempFile, resolvedTarget, ec);
         } else {
             std::filesystem::path rechecked;
