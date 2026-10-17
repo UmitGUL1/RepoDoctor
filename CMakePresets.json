@@ -1,0 +1,51 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release (CLI + Qt6 GUI + GTest + Benchmarks)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "REPODOCTOR_BUILD_CLI": "ON",
+        "REPODOCTOR_BUILD_GUI": "ON",
+        "REPODOCTOR_BUILD_TESTS": "ON",
+        "REPODOCTOR_BUILD_BENCHMARKS": "ON",
+        "REPODOCTOR_USE_LIBGIT2": "ON"
+      }
+    },
+    {
+      "name": "linux-sanitizers",
+      "displayName": "Linux Debug with ASan + UBSan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/sanitizers",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "REPODOCTOR_BUILD_CLI": "ON",
+        "REPODOCTOR_BUILD_GUI": "OFF",
+        "REPODOCTOR_BUILD_TESTS": "ON",
+        "REPODOCTOR_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "windows-x64-portable",
+      "displayName": "Windows x64 Portable Static CLI",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-x64",
+      "toolchainFile": "${sourceDir}/cmake/Toolchain-MinGW64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "REPODOCTOR_BUILD_CLI": "ON",
+        "REPODOCTOR_BUILD_GUI": "OFF",
+        "REPODOCTOR_BUILD_TESTS": "OFF",
+        "REPODOCTOR_USE_LIBGIT2": "OFF"
+      }
+    }
+  ]
+}

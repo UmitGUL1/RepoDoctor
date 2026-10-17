@@ -1,0 +1,114 @@
+name: RepoDoctor CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-build-and-test:
+    name: Linux (Ubuntu 24.04 • GCC 13 • Qt6 • libgit2 • GTest)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake ninja-build libgit2-dev nlohmann-json3-dev libgtest-dev \
+            qt6-base-dev qt6-declarative-dev libqt6quick6 libqt6quickcontrols2-6 \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+            qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript xvfb
+
+      - name: Configure CMake
+        run: cmake -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build CLI, Qt6 GUI, Tests & Benchmarks
+        run: cmake --build build/linux --parallel
+
+      - name: Run GoogleTest Suite
+        run: ctest --test-dir build/linux --output-on-failure --no-tests=error
+
+      - name: Self-Scan Repository & Generate SARIF Report
+        run: ./build/linux/repodoctor-cli scan . --format sarif --output repodoctor-self.sarif --fail-on HIGH
+
+      - name: Verify actual QML application and capture pages
+        run: xvfb-run -a timeout 60 ./build/linux/RepoDoctor --scan-path . --capture-screenshots build/screenshots
+        env:
+          QT_QUICK_BACKEND: software
+
+      - name: Package Linux application
+        run: |
+          mkdir -p package/repodoctor-linux-x64
+          cp build/linux/repodoctor-cli build/linux/RepoDoctor README.md LICENSE package/repodoctor-linux-x64/
+          tar -C package -czf package/repodoctor-linux-x64.tar.gz repodoctor-linux-x64
+
+      - name: Upload Linux application and screenshots
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3
+        with:
+          name: repodoctor-linux-x64
+          path: |
+            package/repodoctor-linux-x64.tar.gz
+            build/screenshots
+
+      - name: Upload SARIF Artifact
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        with:
+          name: repodoctor-sarif-report
+          path: repodoctor-self.sarif
+
+  windows-build-and-test:
+    name: Windows x64 (MSVC / MinGW • C++20)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Install test dependency
+        run: vcpkg install gtest:x64-windows
+
+      - name: Install Qt desktop runtime and development tools
+        run: |
+          python -m pip install aqtinstall==3.1.20
+          python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --outputdir C:/Qt
+          "C:/Qt/6.8.3/msvc2022_64/bin" >> $env:GITHUB_PATH
+
+      - name: Configure CMake (CLI and tests)
+        run: cmake -B build/win -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DREPODOCTOR_BUILD_GUI=ON -DREPODOCTOR_BUILD_TESTS=ON -DREPODOCTOR_USE_LIBGIT2=OFF
+
+      - name: Build CLI and tests
+        run: cmake --build build/win --config Release
+
+      - name: Run Windows tests
+        run: |
+          $env:PATH = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin;$env:PATH"
+          ctest --test-dir build/win -C Release --output-on-failure --no-tests=error
+
+      - name: Verify CLI Self-Scan
+        run: .\build\win\Release\repodoctor-cli.exe scan . --fail-on HIGH
+
+      - name: Package Windows desktop app and CLI
+        run: |
+          New-Item -ItemType Directory -Path package/repodoctor-windows-x64 -Force | Out-Null
+          Copy-Item build/win/Release/RepoDoctor.exe,build/win/Release/repodoctor-cli.exe,README.md,LICENSE package/repodoctor-windows-x64/
+          windeployqt --release --qmldir ui/qml --compiler-runtime package/repodoctor-windows-x64/RepoDoctor.exe
+          Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination package/repodoctor-windows-x64/
+
+      - name: Smoke-test packaged application
+        run: |
+          $app = Start-Process -FilePath ./package/repodoctor-windows-x64/RepoDoctor.exe -ArgumentList '--scan-path', '.', '--capture-screenshots', 'build/screenshots' -PassThru -WindowStyle Hidden
+          if (!$app.WaitForExit(60000)) { $app.Kill(); throw 'GUI smoke test timed out' }
+          if ($app.ExitCode -ne 0) { throw "GUI exited with $($app.ExitCode)" }
+          if (@(Get-ChildItem build/screenshots/*.png).Count -ne 6) { throw 'Missing screenshots' }
+
+      - name: Upload portable Windows application
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3
+        with:
+          name: repodoctor-windows-x64
+          path: package/repodoctor-windows-x64/

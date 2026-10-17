@@ -1,0 +1,51 @@
+name: RepoDoctor Release Packaging
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  package-releases:
+    name: Build Portable Windows x64 & Linux x64 Releases
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Install Native & Cross-Compilation Toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake ninja-build zip libgit2-dev nlohmann-json3-dev libgtest-dev \
+            qt6-base-dev qt6-declarative-dev g++-mingw-w64-x86-64-posix
+
+      - name: Build & Test Linux Release
+        run: |
+          cmake -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/linux --parallel
+          ctest --test-dir build/linux --output-on-failure --no-tests=error
+
+      - name: Build Standalone Portable Windows x64 CLI Release
+        run: |
+          cmake -B build/windows-x64 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain-MinGW64.cmake \
+            -DREPODOCTOR_BUILD_GUI=OFF \
+            -DREPODOCTOR_BUILD_TESTS=OFF \
+            -DREPODOCTOR_USE_LIBGIT2=OFF
+          cmake --build build/windows-x64 --parallel
+
+      - name: Package Archives & Compute SHA-256 Checksums
+        run: |
+          mkdir -p dist/repodoctor-windows-x64 dist/repodoctor-linux-x64
+          cp build/windows-x64/repodoctor-cli.exe dist/repodoctor-windows-x64/
+          cp README.md LICENSE dist/repodoctor-windows-x64/
+          cp build/linux/repodoctor-cli build/linux/RepoDoctor dist/repodoctor-linux-x64/
+          cp README.md LICENSE dist/repodoctor-linux-x64/
+          (cd dist && zip -r repodoctor-v1.0.0-windows-x64.zip repodoctor-windows-x64)
+          (cd dist && tar -czf repodoctor-v1.0.0-linux-x64.tar.gz repodoctor-linux-x64)
+          (cd dist && sha256sum repodoctor-v1.0.0-windows-x64.zip repodoctor-v1.0.0-linux-x64.tar.gz > SHA256SUMS.txt)
