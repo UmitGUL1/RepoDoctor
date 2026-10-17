@@ -12,9 +12,19 @@
 
 ## Desktop interface
 
-The Qt/QML application has six pages: Home, Dashboard, Findings, Auto-Fix,
-Reports and Settings. CI opens the actual application and captures all six.
-Fresh screenshots are included in the Linux build artifact.
+Screenshots captured from the running Qt/QML application in the [verified build](https://github.com/UmitGUL1/RepoDoctor/actions/runs/39035974034).
+
+| Home | Dashboard |
+|---|---|
+| ![Home](assets/screenshots/home.png) | ![Dashboard](assets/screenshots/dashboard.png) |
+
+| Findings | Auto-Fix |
+|---|---|
+| ![Findings](assets/screenshots/findings.png) | ![Auto-Fix](assets/screenshots/autofix.png) |
+
+| Reports | Settings |
+|---|---|
+| ![Reports](assets/screenshots/reports.png) | ![Settings](assets/screenshots/settings.png) |
 
 ## Key Capabilities
 
