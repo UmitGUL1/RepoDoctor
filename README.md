@@ -8,9 +8,11 @@
 
 ---
 
-## Desktop screenshots
+## Desktop interface
 
-CI captures all six pages from the running application. Fresh screenshots are included in the Linux build artifact.
+The Qt/QML application has six pages: Home, Dashboard, Findings, Auto-Fix,
+Reports and Settings. CI opens the actual application and captures all six.
+Fresh screenshots are included in the Linux build artifact.
 
 ## Key Capabilities
 
@@ -22,28 +24,39 @@ CI captures all six pages from the running application. Fresh screenshots are in
 
 ---
 
-> Source hardening revision: see [verification status](IMPLEMENTATION_STATUS.md).
-> Rebuild this source; the original v1.0.0 binaries do not contain these fixes.
+> See [verification status](IMPLEMENTATION_STATUS.md) for the tested revision and known limits.
 
 ## Installation & Building
 
-### Portable Pre-Built Binaries (`dist/`)
-- **Windows x64 Portable CLI**: `dist/repodoctor-v1.0.0-windows-x64.zip` (`repodoctor-cli.exe` statically linked; requires no Qt or C++ compiler installation).
-- **Linux x64 Release**: `dist/repodoctor-v1.0.0-linux-x64.tar.gz` (`repodoctor-cli` + `RepoDoctor` Qt 6 desktop app).
+### Download the Windows application
+
+1. Open [GitHub Actions](https://github.com/UmitGUL1/RepoDoctor/actions/workflows/ci.yml).
+2. Select the latest **successful** run and download the **repodoctor-windows-x64** artifact.
+3. Extract the whole ZIP and open **RepoDoctor.exe**. Keep the DLLs and plugin folders beside it.
+
+The package contains the GUI, CLI, Qt runtime and MSVC runtime. It needs no
+compiler or separate Qt installation. Public GitHub scans require Git and a
+network connection; local scans work offline.
+
+The **repodoctor-linux-x64** artifact contains the Linux binaries and fresh
+screenshots. Linux binaries require the system Qt 6/libgit2 runtime; they are
+not a statically linked AppImage. Ubuntu 24.04 is the verified Linux target.
 
 ### Building from Source
 
 ```bash
 # Ubuntu / Debian prerequisites
 sudo apt-get install cmake ninja-build libgit2-dev nlohmann-json3-dev libgtest-dev \
-  qt6-base-dev qt6-declarative-dev libqt6quick6 libqt6quickcontrols2-6
+  qt6-base-dev qt6-declarative-dev libqt6quick6 libqt6quickcontrols2-6 \
+  qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+  qml6-module-qtquick-window qml6-module-qtquick-templates qml6-module-qtqml-workerscript
 
 # Configure and build Release
 cmake --preset linux-release
 cmake --build build/linux --parallel
 
 # Run automated GoogleTest suite
-ctest --test-dir build/linux --output-on-failure
+ctest --test-dir build/linux --output-on-failure --no-tests=error
 ```
 
 ---

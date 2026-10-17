@@ -98,11 +98,12 @@ jobs:
           New-Item -ItemType Directory -Path package/repodoctor-windows-x64 -Force | Out-Null
           Copy-Item build/win/Release/RepoDoctor.exe,build/win/Release/repodoctor-cli.exe,README.md,LICENSE package/repodoctor-windows-x64/
           windeployqt --release --qmldir ui/qml --compiler-runtime package/repodoctor-windows-x64/RepoDoctor.exe
-          Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination package/repodoctor-windows-x64/
           $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
-          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
           if (!$crt) { throw 'MSVC application-local runtime not found' }
           Copy-Item "$($crt.FullName)/*.dll" package/repodoctor-windows-x64/
+          Copy-Item THIRD_PARTY_NOTICES.md package/repodoctor-windows-x64/
+          Copy-Item licenses package/repodoctor-windows-x64/ -Recurse
 
       - name: Smoke-test packaged application
         run: |
