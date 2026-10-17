@@ -99,10 +99,18 @@ jobs:
           Copy-Item build/win/Release/RepoDoctor.exe,build/win/Release/repodoctor-cli.exe,README.md,LICENSE package/repodoctor-windows-x64/
           windeployqt --release --qmldir ui/qml --compiler-runtime package/repodoctor-windows-x64/RepoDoctor.exe
           Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination package/repodoctor-windows-x64/
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$crt) { throw 'MSVC application-local runtime not found' }
+          Copy-Item "$($crt.FullName)/*.dll" package/repodoctor-windows-x64/
 
       - name: Smoke-test packaged application
         run: |
-          $app = Start-Process -FilePath ./package/repodoctor-windows-x64/RepoDoctor.exe -ArgumentList '--scan-path', '.', '--capture-screenshots', 'build/screenshots' -PassThru -WindowStyle Hidden
+          $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
+          $env:QT_PLUGIN_PATH = ''
+          $env:QML2_IMPORT_PATH = ''
+          $env:QT_QUICK_BACKEND = 'software'
+          $app = Start-Process -FilePath ./package/repodoctor-windows-x64/RepoDoctor.exe -WorkingDirectory ./package/repodoctor-windows-x64 -ArgumentList '--scan-path', "$PWD", '--capture-screenshots', "$PWD/build/screenshots" -PassThru -WindowStyle Hidden
           if (!$app.WaitForExit(60000)) { $app.Kill(); throw 'GUI smoke test timed out' }
           if ($app.ExitCode -ne 0) { throw "GUI exited with $($app.ExitCode)" }
           if (@(Get-ChildItem build/screenshots/*.png).Count -ne 6) { throw 'Missing screenshots' }
@@ -112,3 +120,17 @@ jobs:
         with:
           name: repodoctor-windows-x64
           path: package/repodoctor-windows-x64/
+
+  sanitizers:
+    name: Linux AddressSanitizer and UndefinedBehaviorSanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+      - name: Install dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake ninja-build libgtest-dev
+      - name: Configure instrumented build
+        run: cmake -S . -B build/sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug -DREPODOCTOR_BUILD_GUI=OFF -DREPODOCTOR_USE_LIBGIT2=OFF -DREPODOCTOR_BUILD_BENCHMARKS=OFF -DREPODOCTOR_ENABLE_SANITIZERS=ON
+      - name: Build and test with sanitizers
+        run: |
+          cmake --build build/sanitizers --parallel 2
+          ctest --test-dir build/sanitizers --output-on-failure --no-tests=error

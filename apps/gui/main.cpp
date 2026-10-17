@@ -87,7 +87,10 @@ int main(int argc, char* argv[]) {
         QObject::connect(&backend, &repodoctor::gui::BackendController::scanStateChanged,
             &app, [&]() {
                 if (!backend.isScanning()) {
-                    if (!backend.hasScanResult()) QCoreApplication::exit(3);
+                    if (!backend.hasScanResult()) {
+                        std::cerr << backend.statusMessage().toStdString() << "\n";
+                        QCoreApplication::exit(3);
+                    }
                     else capturePages();
                 }
             });

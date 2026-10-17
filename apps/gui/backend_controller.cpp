@@ -152,8 +152,8 @@ void BackendController::startScan(std::shared_ptr<IRepositorySource> source) {
             activeSource_ = source;
         }
         isScanning_ = false;
-        emit scanStateChanged();
         applyScanResult(std::move(*result));
+        emit scanStateChanged();
         worker->deleteLater();
     });
     worker->start();

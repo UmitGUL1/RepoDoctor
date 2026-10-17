@@ -24,11 +24,15 @@ TEST(GuiScanRegression, ScanReturnsBeforeWorkerFinishesAndRejectsReentry) {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     repodoctor::gui::BackendController backend;
+    bool resultReadyAtCompletion = false;
+    QObject::connect(&backend, &repodoctor::gui::BackendController::scanStateChanged,
+        [&] { if (!backend.isScanning()) resultReadyAtCompletion = backend.hasScanResult(); });
     backend.scanLocalPath(directory.path());
     EXPECT_TRUE(backend.isScanning());
     backend.scanLocalPath(QStringLiteral("missing-directory"));
     ASSERT_TRUE(finishScan(backend));
     EXPECT_TRUE(backend.hasScanResult());
+    EXPECT_TRUE(resultReadyAtCompletion);
 }
 
 TEST(GuiScanRegression, CancellationIsDeliveredWhileWorkerRuns) {
