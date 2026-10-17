@@ -109,28 +109,23 @@ void ScanContext::indexRepository() {
         }
 
         const auto& entryPath = it->path();
-        std::error_code relEc;
-        const auto relFsPath = std::filesystem::relative(entryPath, baseRoot, relEc);
-        if (relEc || relFsPath.empty()) {
+        // Inspect the directory entry itself before any operation can resolve its target.
+        std::error_code symEc;
+        const auto symStatus = std::filesystem::symlink_status(entryPath, symEc);
+        if (!symEc && std::filesystem::is_symlink(symStatus)) {
+            ++stats_.symlinksSkipped;
+            it.disable_recursion_pending();
             continue;
         }
+        const auto relFsPath = entryPath.lexically_relative(baseRoot);
+        if (relFsPath.empty()) continue;
         const std::string relStr = pathToGenericUtf8(relFsPath);
+        std::error_code relEc;
 
         // Never descend into .git internal object database or backup directories
         if (relStr == ".git" || relStr.rfind(".git/", 0) == 0 ||
             relStr == ".repodoctor-backup" || relStr.rfind(".repodoctor-backup/", 0) == 0) {
             if (it->is_directory(relEc)) {
-                it.disable_recursion_pending();
-            }
-            continue;
-        }
-
-        // Check symlink safety first: do not follow symlinks or allow escaping root
-        std::error_code symEc;
-        const auto symStatus = std::filesystem::symlink_status(entryPath, symEc);
-        if (!symEc && std::filesystem::is_symlink(symStatus)) {
-            stats_.symlinksSkipped++;
-            if (it->is_directory(symEc)) {
                 it.disable_recursion_pending();
             }
             continue;

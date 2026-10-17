@@ -1,5 +1,7 @@
 function(repodoctor_set_project_warnings target_name)
     set(MSVC_WARNINGS
+        /utf-8
+        /MP2
         /W4
         /w14242
         /w14254

@@ -49,7 +49,7 @@ public:
     const std::filesystem::path& path() const noexcept { return root_; }
 
     void writeFile(const std::string& relPath, const std::string& content) const {
-        const auto fullPath = root_ / relPath;
+        const auto fullPath = root_ / utf8ToPath(relPath);
         std::error_code ec;
         std::filesystem::create_directories(fullPath.parent_path(), ec);
         std::ofstream out(fullPath, std::ios::binary | std::ios::trunc);
@@ -374,7 +374,9 @@ TEST(EdgeCasesTest, EmptyRepoUnicodeFilenamesLongPathsMalformedFilesSymlinksAndC
     }
 
     // 2. Unicode filenames, long nested paths, and malformed JSON manifests
-    repo.writeFile("docs/ümit_gül_doküman_日本語.md", "# Unicode Markdown\nValid content.\n");
+    const auto unicodeName = pathToGenericUtf8(std::filesystem::path(u8"docs/\u00fcmit_g\u00fcl_dok\u00fcman_\u4e2d\u6587.md"));
+    repo.writeFile(unicodeName, "# Unicode Markdown\nValid content.\n");
+    ASSERT_TRUE(std::filesystem::exists(repo.path() / utf8ToPath(unicodeName)));
     repo.writeFile(
         "deep/level1/level2/level3/level4/level5/level6/level7/nested_module.py",
         "def hello():\n    return 42\n");
