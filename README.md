@@ -73,6 +73,14 @@ ctest --test-dir build/linux --output-on-failure --no-tests=error
 
 ---
 
+## Advanced scanning
+
+Scan staged index contents with `--staged`, compare working files with `--since REF`,
+inspect past snapshots with `--scan-history --max-commits 50`, and accept reviewed
+existing findings with version 2 baselines. Git is required for incremental/history
+scans. Read the [semantics, limits and baseline migration guide](docs/advanced-scanning.md)
+before adding these options to CI.
+
 ## CLI Usage & Examples
 
 ```bash

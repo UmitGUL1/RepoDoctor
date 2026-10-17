@@ -2,21 +2,21 @@
 
 Verified on 2026-10-17 using GitHub Actions.
 
-Source revision: `6029abc4aaadf39f3feba6468a87cb8ea03a9a3a`.
+Source revision: `30e81f00738f40559426106eef9f7ad081ed4234`.
 
-[Build, test logs and downloadable applications](https://github.com/UmitGUL1/RepoDoctor/actions/runs/39035974034)
+[Build, test logs and downloadable applications](https://github.com/UmitGUL1/RepoDoctor/actions/runs/39042050719)
 
 ## Results
 
 | Check | Result |
 |---|---|
 | Linux C++20 CLI and Qt 6 desktop build | Passed |
-| Linux core tests | 19 cases passed |
+| Linux core tests | 39 cases passed |
 | Linux Qt controller tests | 4 cases passed |
 | Linux real QML application and six-page capture | Passed |
 | Linux ASan and UBSan core tests | Passed |
 | Windows MSVC CLI and Qt 6 desktop build | Passed |
-| Windows core tests | 19 cases passed |
+| Windows core tests | 39 cases passed |
 | Windows Qt controller tests | 4 cases passed |
 | Windows deployed application with isolated runtime PATH | Passed |
 | Windows six-page screenshot capture | Passed |
@@ -24,6 +24,26 @@ Source revision: `6029abc4aaadf39f3feba6468a87cb8ea03a9a3a`.
 
 The CI run includes the portable **repodoctor-windows-x64** application artifact,
 the **repodoctor-linux-x64** artifact with screenshots, and a SARIF report.
+
+## Advanced scanning integration
+
+The Desktop additions were merged onto the previously hardened source. Each
+platform now runs 39 core cases and 4 Qt controller cases. Sanitizers exercise
+the same 39 core cases. The packaged Windows GUI also passes the isolated-PATH
+startup and six-page capture checks.
+
+- Staged scans read index blobs, including partial staging and missing working files.
+- Invalid revisions and incompatible scan modes fail explicitly.
+- Git reads use bounded, cancellable child processes with separate arguments.
+- History preserves snapshot line numbers and binary sizes, rejects shallow clones,
+  and withholds potentially sensitive author/message metadata.
+- Version 2 SHA-256 baselines distinguish changed secrets and new occurrences.
+- Baseline output never overwrites existing files; malformed input fails the scan.
+- Accepted baseline checks remain NOT_VERIFIED.
+- Quoted ignore markers cannot suppress secrets; cross-rule evidence is redacted.
+- New scan settings round-trip, while file-writing paths stay explicit CLI/API inputs.
+
+See [advanced scanning](docs/advanced-scanning.md) for commands, migration and limits.
 
 ## Fixes included
 
